@@ -94,28 +94,49 @@ class GatingApp(tk.Tk):
                     config['param'].current(0)
                     
                 config['view'].set(target_v)
-            # --- NEW: AUTO-GATE LOGIC ---
-            # We look for S21 (Transmission) to find the arrival time at the end of the fixture
+
+            # --- NEW: DYNAMIC AUTO-GATE & SPAN LOGIC ---
             search_param = "S21" if "S21" in all_p else all_p[0]
             try:
                 # Perform a quick internal scan to find the impulse peak
-                # We use a wide temporary gate for the scan
-                _, _, t_ns, _, y_imp = self.engine.get_processed_data(search_param, 0, 1, 50.0)
+                _, _, t_ns, _, y_imp = self.engine.get_processed_data(search_param, 0, 10, 50.0)
                 
-                # Find the peak magnitude index
-                idx_peak = np.argmax(np.abs(y_imp))
+                # Detect impulse peak (Arrival Time)
+                mag_imp = np.abs(y_imp)
+                idx_peak = np.argmax(mag_imp)
                 arrival_time = t_ns[idx_peak]
                 
-                # Update the Entry boxes in the UI for the user
+                # Dynamic Span Calculation (10% Threshold)
+                threshold = 0.10 * mag_imp[idx_peak]
+                
+                # Find indices where signal is above threshold
+                above_thresh = np.where(mag_imp > threshold)[0]
+                
+                if len(above_thresh) > 0:
+                    # Find the specific pulse containing the peak
+                    pulse_indices = np.split(above_thresh, np.where(np.diff(above_thresh) != 1)[0] + 1)
+                    target_pulse = [p for p in pulse_indices if idx_peak in p][0]
+                    
+                    t_start = t_ns[target_pulse[0]]
+                    t_end = t_ns[target_pulse[-1]]
+                    
+                    # Apply a 1.5x buffer for visibility
+                    detected_width = (t_end - t_start) * 1.5
+                    # Clamp between 1.5ns and 8ns for sensible defaults
+                    final_span = max(1.5, min(detected_width, 8.0))
+                else:
+                    final_span = 2.0
+                
+                # Update UI entries
                 self.ent_center.delete(0, tk.END)
                 self.ent_center.insert(0, f"{arrival_time:.3f}")
                 
-                # Set a standard 2.0ns span as a starting point
                 self.ent_span.delete(0, tk.END)
-                self.ent_span.insert(0, "2.0")
+                self.ent_span.insert(0, f"{final_span:.2f}")
                 
             except Exception as e:
                 print(f"Auto-detection failed: {e}")                
+            
             self._update()
 
 
