@@ -7,6 +7,7 @@ class NetworkEngine:
 
     def load_file(self, file_path):
         nw = rf.Network(file_path)
+        # Extrapolate to DC for accurate TDR/Step response
         self.network = nw.extrapolate_to_dc()
         return self.network
 
@@ -18,12 +19,13 @@ class NetworkEngine:
     def get_processed_data(self, param_str, center, span, z0_ref=50.0):
         if not self.network: return None, None, None, None, None
         
+        # Parse S-parameter string (e.g., "S21")
         i, j = int(param_str[1])-1, int(param_str[2])-1
         one_port = rf.Network(frequency=self.network.frequency, 
                              s=self.network.s[:, i, j], 
                              z0=self.network.z0[:, i])
         
-        # Normalize to the custom reference impedance
+        # Normalize to custom reference
         one_port.z0 = np.full(len(one_port), z0_ref)
         
         # Frequency domain gating

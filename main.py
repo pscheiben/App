@@ -1,8 +1,8 @@
 from gui import GatingApp
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 if __name__ == "__main__":
-    print(f"Launching Gating Tool v{__version__} for PCIe Fixture Analysis...")
+    print(f"Launching OmniGate SI v{__version__}...")
     app = GatingApp()
     app.mainloop()

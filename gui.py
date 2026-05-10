@@ -10,7 +10,7 @@ from network_engine import NetworkEngine
 class GatingApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("High-Speed Gating Suite v2.10")
+        self.title("OmniGate SI - Automated Hardware Analysis")        
         self.geometry("1600x950")
         self.engine = NetworkEngine()
         self.plot_options = ["Magnitude (dB)", "Impulse Location", "Impedance (Ohm)", "Phase"]
@@ -32,12 +32,12 @@ class GatingApp(tk.Tk):
         
         ttk.Label(controls, text="Gate Center (ns):").pack(anchor="w")
         self.ent_center = ttk.Entry(controls)
-        self.ent_center.insert(0, "2.5")
+        self.ent_center.insert(0, "0.0")
         self.ent_center.pack(pady=2)
 
         ttk.Label(controls, text="Gate Span (ns):").pack(anchor="w")
         self.ent_span = ttk.Entry(controls)
-        self.ent_span.insert(0, "4.0")
+        self.ent_span.insert(0, "2.0")
         self.ent_span.pack(pady=2)
 
         ttk.Label(controls, text="Reference Z0 (Ω):").pack(anchor="w", pady=(10, 0))
@@ -94,8 +94,31 @@ class GatingApp(tk.Tk):
                     config['param'].current(0)
                     
                 config['view'].set(target_v)
+            # --- NEW: AUTO-GATE LOGIC ---
+            # We look for S21 (Transmission) to find the arrival time at the end of the fixture
+            search_param = "S21" if "S21" in all_p else all_p[0]
+            try:
+                # Perform a quick internal scan to find the impulse peak
+                # We use a wide temporary gate for the scan
+                _, _, t_ns, _, y_imp = self.engine.get_processed_data(search_param, 0, 1, 50.0)
                 
+                # Find the peak magnitude index
+                idx_peak = np.argmax(np.abs(y_imp))
+                arrival_time = t_ns[idx_peak]
+                
+                # Update the Entry boxes in the UI for the user
+                self.ent_center.delete(0, tk.END)
+                self.ent_center.insert(0, f"{arrival_time:.3f}")
+                
+                # Set a standard 2.0ns span as a starting point
+                self.ent_span.delete(0, tk.END)
+                self.ent_span.insert(0, "2.0")
+                
+            except Exception as e:
+                print(f"Auto-detection failed: {e}")                
             self._update()
+
+
 
     def _update(self):
         if not self.engine.network: return
