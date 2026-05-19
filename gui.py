@@ -17,9 +17,12 @@ class GatingApp(tk.Tk):
         self.engine = NetworkEngine()
         self.ref_engine = NetworkEngine() 
         
-        # Raw network backups for non-destructive port remapping
         self.raw_main_network = None
         self.raw_ref_network = None
+        
+        # Track filenames for dynamic title updates
+        self.main_filename = None
+        self.ref_filename = None
         
         self.plot_options = ["Magnitude (dB)", "Impulse Location", "Impedance (Ohm)", "Phase"]
         
@@ -41,7 +44,6 @@ class GatingApp(tk.Tk):
         ttk.Button(btn_frame, text="Load Main File", command=self._load).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         ttk.Button(btn_frame, text="Load Reference", command=self._load_ref).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
         
-        # --- PORT REMAPPING UI ---
         ttk.Label(controls, text="Port Remap (e.g., 2,1,4,3):", font=('', 9, 'italic')).pack(anchor="w", pady=(5, 0))
         map_frame = ttk.Frame(controls)
         map_frame.pack(fill=tk.X, pady=2)
@@ -53,7 +55,6 @@ class GatingApp(tk.Tk):
         ttk.Label(map_frame, text="Ref:").pack(side=tk.LEFT)
         self.ent_ref_ports = ttk.Entry(map_frame, width=9)
         self.ent_ref_ports.pack(side=tk.LEFT, padx=(2, 0))
-        # -------------------------
         
         ttk.Label(controls, text="Gate Center (ns):").pack(anchor="w", pady=(10, 0))
         self.ent_center = ttk.Entry(controls)
@@ -105,10 +106,23 @@ class GatingApp(tk.Tk):
         NavigationToolbar2Tk(self.canvas, plot_container)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+    def _update_title(self):
+        base_title = "OmniGate SI - Automated Hardware Analysis"
+        if self.main_filename and self.ref_filename:
+            self.title(f"{base_title}  -  [Main: {self.main_filename}  |  Ref: {self.ref_filename}]")
+        elif self.main_filename:
+            self.title(f"{base_title}  -  [Main: {self.main_filename}]")
+        elif self.ref_filename:
+            self.title(f"{base_title}  -  [Ref: {self.ref_filename}]")
+        else:
+            self.title(base_title)
+
     def _clear_ref(self):
         self.ref_engine.network = None
         self.raw_ref_network = None
         self.ent_ref_ports.delete(0, tk.END)
+        self.ref_filename = None
+        self._update_title()
         self._update()
         
     def _apply_port_mapping(self, raw_network, map_str):
@@ -120,7 +134,6 @@ class GatingApp(tk.Tk):
             n = raw_network.nports
             if len(new_order) == n and set(new_order) == set(range(n)):
                 nw = raw_network.copy()
-                # Symmetric matrix permutation for S-parameters
                 nw.s = nw.s[:, new_order, :][:, :, new_order]
                 nw.z0 = nw.z0[:, new_order]
                 return nw
@@ -134,6 +147,9 @@ class GatingApp(tk.Tk):
     def _load_ref(self):
         path = filedialog.askopenfilename(filetypes=[("Touchstone", "*.s2p *.s4p")])
         if path:
+            self.ref_filename = os.path.basename(path)
+            self._update_title()
+            
             self.ref_engine.load_file(path)
             self.raw_ref_network = self.ref_engine.network.copy()
             self._update()
@@ -141,8 +157,8 @@ class GatingApp(tk.Tk):
     def _load(self):
         path = filedialog.askopenfilename(filetypes=[("Touchstone", "*.s2p *.s4p")])
         if path:
-            filename = os.path.basename(path)
-            self.title(f"OmniGate SI - Automated Hardware Analysis - [{filename}]")
+            self.main_filename = os.path.basename(path)
+            self._update_title()
             
             self.engine.load_file(path)
             self.raw_main_network = self.engine.network.copy()
@@ -195,7 +211,6 @@ class GatingApp(tk.Tk):
             self._update()
 
     def _update(self):
-        # 1. Apply active port re-mappings to the engines before processing
         if self.raw_main_network:
             self.engine.network = self._apply_port_mapping(self.raw_main_network, self.ent_main_ports.get())
             
