@@ -20,9 +20,12 @@ class GatingApp(tk.Tk):
         self.raw_main_network = None
         self.raw_ref_network = None
         
-        # Track filenames for dynamic title updates
         self.main_filename = None
         self.ref_filename = None
+        
+        # State tracking for the double-click maximize feature
+        self.zoomed_idx = None
+        self.active_axes = {}
         
         self.plot_options = ["Magnitude (dB)", "Impulse Location", "Impedance (Ohm)", "Phase"]
         
@@ -105,6 +108,57 @@ class GatingApp(tk.Tk):
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
         NavigationToolbar2Tk(self.canvas, plot_container)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # --- BIND DOUBLE CLICK EVENT ---
+        self.canvas.mpl_connect('button_press_event', self._on_double_click)
+
+    def _on_double_click(self, event):
+        # Ensure it was a double-click and inside an actual graph axis
+        if not event.dblclick or event.inaxes is None:
+            return
+            
+        if self.zoomed_idx is not None:
+            # --- SCALING FIX: Modern Matplotlib GridSpec Implementation ---
+            # Restore all subplots to normal 2x2 grid
+            gs_2x2 = self.fig.add_gridspec(2, 2)
+            
+            for idx, ax_dict in self.active_axes.items():
+                ax_dict['main'].set_visible(True)
+                ax_dict['main'].set_subplotspec(gs_2x2[idx])
+                
+                # Ensure the secondary physical distance axis travels with it
+                if ax_dict['twin']:
+                    ax_dict['twin'].set_visible(True)
+                    ax_dict['twin'].set_subplotspec(gs_2x2[idx])
+                    
+            self.zoomed_idx = None
+        else:
+            # Currently in 2x2: Identify which quadrant was clicked
+            target_idx = None
+            for idx, ax_dict in self.active_axes.items():
+                # Account for clicks on either the main axis or the secondary distance twin-axis
+                if event.inaxes in (ax_dict['main'], ax_dict['twin']):
+                    target_idx = idx
+                    break
+                    
+            if target_idx is not None:
+                self.zoomed_idx = target_idx
+                gs_1x1 = self.fig.add_gridspec(1, 1)
+                
+                for idx, ax_dict in self.active_axes.items():
+                    if idx == target_idx:
+                        # Expand clicked quadrant to take the whole 1x1 screen
+                        ax_dict['main'].set_subplotspec(gs_1x1[0])
+                        if ax_dict['twin']:
+                            ax_dict['twin'].set_subplotspec(gs_1x1[0])
+                    else:
+                        # Hide the other quadrants to prevent visual collision
+                        ax_dict['main'].set_visible(False)
+                        if ax_dict['twin']:
+                            ax_dict['twin'].set_visible(False)
+                            
+        self.fig.tight_layout()
+        self.canvas.draw_idle()
 
     def _update_title(self):
         base_title = "OmniGate SI - Automated Hardware Analysis"
@@ -228,13 +282,22 @@ class GatingApp(tk.Tk):
             print("Input Error: Please ensure Gate, Z0, and Length values are numbers.")
             return
 
+        # Reset zoom state and clear figure cleanly on fresh updates
+        self.zoomed_idx = None
+        self.active_axes = {}
         self.fig.clear()
+        
         self.lbl_er_calc.config(text="Calculated εr: --")
         
         gating_enabled = self.enable_gating.get()
+        s_safe = max(s, 1e-9)
 
         for i, config in enumerate(self.quad_configs):
             ax = self.fig.add_subplot(2, 2, i+1)
+            
+            # Map axes for the double-click handler
+            self.active_axes[i] = {'main': ax, 'twin': None}
+            
             p = config['param'].get()
             v = config['view'].get()
             
@@ -343,64 +406,44 @@ class GatingApp(tk.Tk):
                         ax.set_ylim(z_min_val - (z_span * 0.15), z_max_val + (z_span * 0.15))
                         
                         if gating_enabled:
-                            ax.axvspan(c-s/2, c+s/2, color='orange', alpha=0.12, lw=0)
+                            gate_start = c - s/2
+                            gate_end = c + s/2
                             
-                            grad = np.gradient(z_ohm)
-                            valid_view_idx = np.where(view_mask)[0] if np.any(view_mask) else np.arange(len(t_ns))
-                            local_grad = grad[valid_view_idx]
+                            ax.axvspan(gate_start, gate_end, color='orange', alpha=0.12, lw=0)
                             
-                            idx_fall = valid_view_idx[np.argmin(local_grad)]
-                            t_start = t_ns[idx_fall]
-                            
-                            search_mask = (t_ns > (t_start + 0.05)) & (t_ns < x_max)
-                            if np.any(search_mask):
-                                valid_indices = np.where(search_mask)[0]
-                                idx_rise = valid_indices[np.argmax(grad[search_mask])]
-                            else:
-                                idx_rise = idx_fall
+                            if dut_len > 0:
+                                ax_dist = ax.twiny()
+                                # Add the twin axis to the tracker dictionary so the double-click handles it properly
+                                self.active_axes[i]['twin'] = ax_dist
                                 
-                            t_end = t_ns[idx_rise]
-                            dip_width = t_end - t_start if t_end > t_start else 1e-9 
+                                dist_min = ((x_min - gate_start) / s_safe) * dut_len
+                                dist_max = ((x_max - gate_start) / s_safe) * dut_len
+                                ax_dist.set_xlim(dist_min, dist_max)
                                 
-                            ax.axvline(t_start, color='red', linestyle='--', alpha=0.6)
-                            ax.axvline(t_end, color='red', linestyle='--', alpha=0.6)
-                            
-                            if t_end > t_start:
-                                ax.axvspan(t_start, t_end, color='red', alpha=0.08)
-                                ax.text(t_start + dip_width/2, z_min_val + (z_span * 0.05), f"Width: {dip_width:.2f} ns", 
-                                        color='red', fontsize=9, fontweight='bold', ha='center',
-                                        bbox=dict(facecolor='white', alpha=0.9, edgecolor='none', pad=2))
-                                
-                                if dut_len > 0:
-                                    ax_dist = ax.twiny()
-                                    dist_min = ((x_min - t_start) / dip_width) * dut_len
-                                    dist_max = ((x_max - t_start) / dip_width) * dut_len
-                                    ax_dist.set_xlim(dist_min, dist_max)
-                                    
-                                    ax_dist.set_xlabel("Physical Distance into DUT (mm)", color='#0052cc', fontweight='bold')
-                                    ax_dist.tick_params(axis='x', colors='#0052cc')
+                                ax_dist.set_xlabel("Physical Distance into Gate (mm)", color='#0052cc', fontweight='bold')
+                                ax_dist.tick_params(axis='x', colors='#0052cc')
 
-                                    trace_mask = (t_ns > (t_start + 0.05)) & (t_ns < (t_end - 0.05))
-                                    if np.any(trace_mask):
-                                        valid_t = t_ns[trace_mask]
-                                        valid_z = z_ohm[trace_mask]
+                                trace_mask = (t_ns >= gate_start) & (t_ns <= gate_end)
+                                if np.any(trace_mask):
+                                    valid_t = t_ns[trace_mask]
+                                    valid_z = z_ohm[trace_mask]
+                                    
+                                    peaks_ind, _ = scipy.signal.find_peaks(valid_z, prominence=0.4)
+                                    peaks_cap, _ = scipy.signal.find_peaks(-valid_z, prominence=0.4)
+                                    
+                                    y_ruler = ax.get_ylim()[0] + (z_span * 0.02)
+                                    
+                                    for idx in peaks_ind:
+                                        t_val = valid_t[idx]
+                                        dist_val = ((t_val - gate_start) / s_safe) * dut_len
+                                        ax.plot([t_val, t_val], [ax.get_ylim()[0], y_ruler + (z_span*0.05)], color='darkorange', lw=2)
+                                        ax.text(t_val, y_ruler + (z_span*0.06), f"{dist_val:.1f}", color='darkorange', fontsize=7, ha='center', rotation=90)
                                         
-                                        peaks_ind, _ = scipy.signal.find_peaks(valid_z, prominence=0.4)
-                                        peaks_cap, _ = scipy.signal.find_peaks(-valid_z, prominence=0.4)
-                                        
-                                        y_ruler = ax.get_ylim()[0] + (z_span * 0.02)
-                                        
-                                        for idx in peaks_ind:
-                                            t_val = valid_t[idx]
-                                            dist_val = ((t_val - t_start) / dip_width) * dut_len
-                                            ax.plot([t_val, t_val], [ax.get_ylim()[0], y_ruler + (z_span*0.05)], color='darkorange', lw=2)
-                                            ax.text(t_val, y_ruler + (z_span*0.06), f"{dist_val:.1f}", color='darkorange', fontsize=7, ha='center', rotation=90)
-                                            
-                                        for idx in peaks_cap:
-                                            t_val = valid_t[idx]
-                                            dist_val = ((t_val - t_start) / dip_width) * dut_len
-                                            ax.plot([t_val, t_val], [ax.get_ylim()[0], y_ruler + (z_span*0.05)], color='darkred', lw=2)
-                                            ax.text(t_val, y_ruler + (z_span*0.06), f"{dist_val:.1f}", color='darkred', fontsize=7, ha='center', rotation=90)
+                                    for idx in peaks_cap:
+                                        t_val = valid_t[idx]
+                                        dist_val = ((t_val - gate_start) / s_safe) * dut_len
+                                        ax.plot([t_val, t_val], [ax.get_ylim()[0], y_ruler + (z_span*0.05)], color='darkred', lw=2)
+                                        ax.text(t_val, y_ruler + (z_span*0.06), f"{dist_val:.1f}", color='darkred', fontsize=7, ha='center', rotation=90)
                                             
                         if has_ref:
                             ax.legend(loc='lower right', fontsize=8)
