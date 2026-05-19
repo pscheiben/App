@@ -82,7 +82,8 @@ class GatingApp(tk.Tk):
         self.lbl_er_calc = ttk.Label(controls, text="Calculated εr: --", font=('Arial', 10, 'bold'), foreground='#0052cc')
         self.lbl_er_calc.pack(anchor="w", pady=(5, 10))
 
-        self.enable_gating = tk.BooleanVar(value=True)
+        # --- GATING OFF BY DEFAULT ---
+        self.enable_gating = tk.BooleanVar(value=False)
         ttk.Checkbutton(controls, text="Enable Gating", variable=self.enable_gating).pack(anchor="w", pady=5)
 
         self.quad_configs = []
@@ -118,7 +119,6 @@ class GatingApp(tk.Tk):
             return
             
         if self.zoomed_idx is not None:
-            # --- SCALING FIX: Modern Matplotlib GridSpec Implementation ---
             # Restore all subplots to normal 2x2 grid
             gs_2x2 = self.fig.add_gridspec(2, 2)
             
